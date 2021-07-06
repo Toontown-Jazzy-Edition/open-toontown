@@ -25,9 +25,7 @@ from direct.distributed.PyDatagram import PyDatagram
 from direct.distributed.PyDatagramIterator import PyDatagramIterator
 from otp.avatar import Avatar
 from otp.avatar.DistributedPlayer import DistributedPlayer
-from otp.login import TTAccount
 from otp.login import LoginTTSpecificDevAccount
-from otp.login import AccountServerConstants
 from otp.login.CreateAccountScreen import CreateAccountScreen
 from otp.login import LoginScreen
 from otp.otpgui import OTPDialog
@@ -163,20 +161,17 @@ class OTPClientRepository(ClientRepositoryBase):
         else:
             self.notify.error('The required-login was not recognized.')
 
-        self.computeValidateDownload()
         self.wantMagicWords = base.config.GetString('want-magic-words', '')
         if self.launcher and hasattr(self.launcher, 'http'):
             self.http = self.launcher.http
         else:
             self.http = HTTPClient()
 
-        #self.allocateDcFile()
         self.accountOldAuth = config.GetBool('account-old-auth', 0)
         self.accountOldAuth = config.GetBool('%s-account-old-auth' % game.name,
                                              self.accountOldAuth)
         self.useNewTTDevLogin = base.config.GetBool('use-tt-specific-dev-login', False)
-        self.astronSupport = config.GetBool('astron-support', True)
-        if self.astronSupport:
+        if __astron__:
             self.loginInterface = LoginAstronAccount.LoginAstronAccount(self)
             self.notify.info('loginInterface: LoginAstronAccount')
         elif self.useNewTTDevLogin:
@@ -426,7 +421,7 @@ class OTPClientRepository(ClientRepositoryBase):
         self.__pendingMessages = {}
         self.__doId2pendingInterest = {}
         self.centralLogger = self.generateGlobalObject(OtpDoGlobals.OTP_DO_ID_CENTRAL_LOGGER, 'CentralLogger')
-        if self.astronSupport:
+        if __astron__:
             self.astronLoginManager = self.generateGlobalObject(OtpDoGlobals.OTP_DO_ID_ASTRON_LOGIN_MANAGER, 'AstronLoginManager')
 
     def startLeakDetector(self):
@@ -456,24 +451,6 @@ class OTPClientRepository(ClientRepositoryBase):
     def exitLoginOff(self):
         self.handler = None
         return
-
-    def computeValidateDownload(self):
-        if self.launcher:
-            hash = HashVal()
-            hash.mergeWith(launcher.launcherFileDbHash)
-            hash.mergeWith(launcher.serverDbFileHash)
-            self.validateDownload = hash.asHex()
-        else:
-            self.validateDownload = ''
-            basePath = os.path.expandvars('$TOONTOWN') or './toontown'
-            downloadParFilename = Filename.expandFrom(basePath + '/src/configfiles/download.par')
-            if downloadParFilename.exists():
-                downloadPar = open(downloadParFilename.toOsSpecific())
-                for line in downloadPar.readlines():
-                    i = string.find(line, 'VALIDATE_DOWNLOAD=')
-                    if i != -1:
-                        self.validateDownload = string.strip(line[i + 18:])
-                        break
 
     def getServerVersion(self):
         return self.serverVersion
@@ -516,20 +493,9 @@ class OTPClientRepository(ClientRepositoryBase):
         self.gotoFirstScreen()
 
     def gotoFirstScreen(self):
-        try:
-            self.accountServerConstants = AccountServerConstants.AccountServerConstants(self)
-        except TTAccount.TTAccountException as e:
-            self.notify.debug(str(e))
-            self.loginFSM.request('failedToGetServerConstants', [e])
-            return
-
         self.startReaderPollTask()
-        if not self.astronSupport:
+        if not __astron__:
             self.startHeartbeat()
-        newInstall = launcher.getIsNewInstallation()
-        newInstall = base.config.GetBool('new-installation', newInstall)
-        if newInstall:
-            self.notify.warning('new installation')
         self.loginFSM.request('login')
 
     @report(types=['args', 'deltaStamp'], dConfigParam='teleport')
@@ -545,7 +511,6 @@ class OTPClientRepository(ClientRepositoryBase):
     def __handleLoginDone(self, doneStatus):
         mode = doneStatus['mode']
         if mode == 'success':
-            self.setIsNotNewInstallation()
             self.loginFSM.request('waitForGameList')
         elif mode == 'getChatPassword':
             self.loginFSM.request('parentPassword')
@@ -591,7 +556,6 @@ class OTPClientRepository(ClientRepositoryBase):
     def __handleCreateAccountDone(self, doneStatus):
         mode = doneStatus['mode']
         if mode == 'success':
-            self.setIsNotNewInstallation()
             self.loginFSM.request('waitForGameList')
         elif mode == 'reject':
             self.loginFSM.request('reject')
@@ -657,7 +621,7 @@ class OTPClientRepository(ClientRepositoryBase):
     def enterFailedToGetServerConstants(self, e):
         self.handler = self.handleMessageType
         messenger.send('connectionIssue')
-        url = AccountServerConstants.AccountServerConstants.getServerURL()
+        url = 'N/A'
         statusCode = 0
         if isinstance(e, HTTPUtil.ConnectionError):
             statusCode = e.statusCode
@@ -946,7 +910,7 @@ class OTPClientRepository(ClientRepositoryBase):
 
     @report(types=['args', 'deltaStamp'], dConfigParam='teleport')
     def enterWaitForAvatarList(self):
-        if not self.astronSupport:
+        if not __astron__:
             self.handler = self.handleWaitForAvatarList
         self._requestAvatarList()
 
@@ -958,7 +922,7 @@ class OTPClientRepository(ClientRepositoryBase):
 
     @report(types=['args', 'deltaStamp'], dConfigParam='teleport')
     def sendGetAvatarsMsg(self):
-        if self.astronSupport:
+        if __astron__:
             self.astronLoginManager.sendRequestAvatarList()
         else:
             datagram = PyDatagram()
@@ -1035,7 +999,7 @@ class OTPClientRepository(ClientRepositoryBase):
             self.loginFSM.request('shutdown')
         return
 
-    if config.GetBool('astron-support', True):
+    if __astron__:
         @report(types=['args', 'deltaStamp'], dConfigParam='teleport')
         def handleAvatarListResponse(self, avatarList):
             avList = []
@@ -1077,7 +1041,7 @@ class OTPClientRepository(ClientRepositoryBase):
 
     @report(types=['args', 'deltaStamp'], dConfigParam='teleport')
     def sendCreateAvatarMsg(self, avDNA, avName, avPosition):
-        if self.astronSupport:
+        if __astron__:
             self.astronLoginManager.sendCreateAvatar(avDNA, avName, avPosition)
         else:
             datagram = PyDatagram()
@@ -1106,14 +1070,14 @@ class OTPClientRepository(ClientRepositoryBase):
 
     @report(types=['args', 'deltaStamp'], dConfigParam='teleport')
     def enterWaitForDeleteAvatarResponse(self, potAv):
-        if not self.astronSupport:
+        if not __astron__:
             self.handler = self.handleWaitForDeleteAvatarResponse
         self.sendDeleteAvatarMsg(potAv.id)
         self.waitForDatabaseTimeout(requestName='WaitForDeleteAvatarResponse')
 
     @report(types=['args', 'deltaStamp'], dConfigParam='teleport')
     def sendDeleteAvatarMsg(self, avId):
-        if self.astronSupport:
+        if __astron__:
             self.astronLoginManager.sendRequestRemoveAvatar(avId)
         else:
             datagram = PyDatagram()
@@ -1157,7 +1121,7 @@ class OTPClientRepository(ClientRepositoryBase):
 
     @report(types=['args', 'deltaStamp'], dConfigParam='teleport')
     def enterWaitForSetAvatarResponse(self, potAv):
-        if not self.astronSupport:
+        if not __astron__:
             self.handler = self.handleWaitForSetAvatarResponse
         self.sendSetAvatarMsg(potAv)
         self.waitForDatabaseTimeout(requestName='WaitForSetAvatarResponse')
@@ -1177,7 +1141,7 @@ class OTPClientRepository(ClientRepositoryBase):
     def sendSetAvatarIdMsg(self, avId):
         if avId != self.__currentAvId:
             self.__currentAvId = avId
-            if self.astronSupport:
+            if __astron__:
                 self.astronLoginManager.sendRequestPlayAvatar(avId)
             else:
                 datagram = PyDatagram()
@@ -1189,7 +1153,7 @@ class OTPClientRepository(ClientRepositoryBase):
             else:
                 self.startPeriodTimer()
 
-    if not config.GetBool('astron-support', True):
+    if not __astron__:
         @report(types=['args', 'deltaStamp'], dConfigParam='teleport')
         def handleAvatarResponseMsg(self, di):
             pass
@@ -1446,7 +1410,7 @@ class OTPClientRepository(ClientRepositoryBase):
     @report(types=['args', 'deltaStamp'], dConfigParam='teleport')
     def enterWaitOnEnterResponses(self, shardId, hoodId, zoneId, avId):
         self.cleanGameExit = False
-        if not self.astronSupport:
+        if not __astron__:
             self.handler = self.handleWaitOnEnterResponses
         self.handlerArgs = {'hoodId': hoodId,
          'zoneId': zoneId,
@@ -1669,7 +1633,7 @@ class OTPClientRepository(ClientRepositoryBase):
         else:
             self.gameFSM.request('playGame', [hoodId, zoneId, avId])
 
-    if not config.GetBool('astron-support', True):
+    if not __astron__:
         def handlePlayGame(self, msgType, di):
             if self.notify.getDebug():
                 self.notify.debug('handle play game got message type: ' + repr(msgType))
@@ -1887,12 +1851,6 @@ class OTPClientRepository(ClientRepositoryBase):
             self.queryObjectFieldId(doId, fieldId, context)
         return
 
-    def allocateDcFile(self):
-        dcName = 'Shard %s cannot be found.'
-        hash = HashVal()
-        hash.hashString(dcName)
-        self.http.setClientCertificatePassphrase(hash.asHex())
-
     def lostConnection(self):
         ClientRepositoryBase.lostConnection(self)
         self.loginFSM.request('noConnection')
@@ -1930,21 +1888,11 @@ class OTPClientRepository(ClientRepositoryBase):
     def __handleCancelWaiting(self, value):
         self.loginFSM.request('shutdown')
 
-    def setIsNotNewInstallation(self):
-        launcher.setIsNotNewInstallation()
-
     def renderFrame(self):
         gsg = base.win.getGsg()
         if gsg:
             render2d.prepareScene(gsg)
         base.graphicsEngine.renderFrame()
-
-    def refreshAccountServerDate(self, forceRefresh = 0):
-        try:
-            self.accountServerDate.grabDate(force=forceRefresh)
-        except TTAccount.TTAccountException as e:
-            self.notify.debug(str(e))
-            return 1
 
     def resetPeriodTimer(self, secondsRemaining):
         self.periodTimerExpired = 0
@@ -1993,7 +1941,7 @@ class OTPClientRepository(ClientRepositoryBase):
         messenger.send('periodTimerExpired')
         return Task.done
 
-    if not config.GetBool('astron-support', True):
+    if not __astron__:
         def handleMessageType(self, msgType, di):
             if msgType == CLIENT_GO_GET_LOST:
                 self.handleGoGetLost(di)
@@ -2078,7 +2026,7 @@ class OTPClientRepository(ClientRepositoryBase):
             di = DatagramIterator(dg, di.getCurrentIndex())
             self.deferredGenerates.append((CLIENT_DONE_INTEREST_RESP, (dg, di)))
         else:
-            if self.astronSupport:
+            if __astron__:
                 # Play back generates, if necessary.
                 # First, create a new DatagramIterator using
                 # the Datagram from DatagramIterator di, and
@@ -2232,7 +2180,7 @@ class OTPClientRepository(ClientRepositoryBase):
                 return True
         return False
 
-    if not config.GetBool('astron-support', True):
+    if not __astron__:
         def handleGenerateWithRequired(self, di):
             parentId = di.getUint32()
             zoneId = di.getUint32()

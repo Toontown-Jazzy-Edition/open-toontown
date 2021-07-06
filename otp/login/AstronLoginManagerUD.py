@@ -103,10 +103,23 @@ class GameOperation:
         self.callback = callback
 
     def _handleDone(self):
+        # Deletes the sender from either sender2loginOperation or account2operation
+        # depending on the type of operation we are running.
         if self.__class__.__name__ == 'LoginOperation':
             del self.loginManager.sender2loginOperation[self.sender]
         else:
             del self.loginManager.account2operation[self.sender]
+
+    def _handleCloseConnection(self, reason=''):
+        # Closes either the sender connection or the sender account
+        # depending on the type of operation we are running, and then
+        # finishes off this operation.
+        if self.__class__.__name__ == 'LoginOperation':
+            self.loginManager.closeConnection(self.sender, reason=reason)
+        else:
+            self.loginManager.closeConnection(self.sender, reason=reason, isAccount=True)
+
+        self._handleDone()
 
 
 class LoginOperation(GameOperation):
@@ -123,17 +136,25 @@ class LoginOperation(GameOperation):
         self.loginManager.accountDb.lookup(playToken, self.__handleLookup)
 
     def __handleLookup(self, result):
+        # This is a callback function that will be called by the lookup function
+        # of the AstronLoginManager's account DB interface. It processes the
+        # lookup function's result & determines which operation should run next.
         if not result.get('success'):
-            # TODO: Kill the connection
+            # The play token was rejected!
+            self.loginManager.air.writeServerEvent('play-token-rejected', self.sender, self.playToken)
+            self._handleCloseConnection(result.get('reason', 'The accounts database rejected your play token.'))
             return
 
+        # Grab the databaseId, accessLevel, and the accountId from the result.
         self.databaseId = result.get('databaseId', 0)
         self.accessLevel = result.get('accessLevel', 0)
         accountId = result.get('accountId', 0)
         if accountId:
+            # There is an account ID, so let's retrieve the associated account.
             self.accountId = accountId
             self.__handleRetrieveAccount()
         else:
+            # There is no account ID, so let's create a new account.
             self.__handleCreateAccount()
 
     def __handleRetrieveAccount(self):
@@ -141,10 +162,14 @@ class LoginOperation(GameOperation):
                                                       self.__handleAccountRetrieved)
 
     def __handleAccountRetrieved(self, dclass, fields):
+        # Checks if the queried object is valid and if it is, calls
+        # the __handleSetAccount function. Otherwise, the connection is closed.
         if dclass != self.loginManager.air.dclassesByName['AstronAccountUD']:
-            # TODO: Kill the connection
+            # This is not an account object! Close the connection.
+            self._handleCloseConnection('Your account object (%s) was not found in the database!' % dclass)
             return
 
+        # We can now call the __handleSetAccount function.
         self.account = fields
         self.__handleSetAccount()
 
@@ -162,10 +187,18 @@ class LoginOperation(GameOperation):
                                                        self.account, self.__handleAccountCreated)
 
     def __handleAccountCreated(self, accountId):
+        # This function handles successful & unsuccessful account creations.
         if not accountId:
-            # TODO: Kill the connection
+            # If we don't have an accountId, then that means the database was unable
+            # to create an account object for us, for whatever reason. Close the connection.
+            self.notify.warning('Database failed to create an account object!')
+            self._handleCloseConnection('Your account object could not be created in the game database.')
             return
 
+        # Otherwise, the account object was created successfully!
+        self.loginManager.air.writeServerEvent('account-created', accountId)
+
+        # We can now call the __storeAccountId function.
         self.accountId = accountId
         self.__storeAccountId()
 
@@ -174,9 +207,12 @@ class LoginOperation(GameOperation):
 
     def __handleAccountIdStored(self, success=True):
         if not success:
-            # TODO: Kill the connection
+            # The account bridge was unable to store the account ID,
+            # for whatever reason. Close the connection.
+            self._handleCloseConnection('The account server could not save your account database ID!')
             return
 
+        # We are all set with account creation now! It's time to call the __handleSetAccount function.
         self.__handleSetAccount()
 
     def __handleSetAccount(self):
@@ -229,7 +265,12 @@ class LoginOperation(GameOperation):
         self._handleDone()
 
     def getLastLoggedInStr(self):
-        return ''  # TODO
+        lastLoggedInStr = ''
+        if hasattr(self.loginManager.air, 'toontownTimeManager') and self.loginManager.air.toontownTimeManager:
+            lastLoggedInStr = datetime.strftime(self.loginManager.air.toontownTimeManager.getCurServerDateTime(),
+                                                self.loginManager.air.toontownTimeManager.formatStr)
+
+        return lastLoggedInStr
 
     def getAccountCreationDate(self):
         accountCreationDate = self.account.get('CREATED', '')
@@ -266,7 +307,8 @@ class AvatarOperation(GameOperation):
 
     def __handleAccountRetrieved(self, dclass, fields):
         if dclass != self.loginManager.air.dclassesByName['AstronAccountUD']:
-            # TODO: Kill the connection
+            # This is not an account object! Close the connection:
+            self._handleCloseConnection('Your account object (%s) was not found in the database!' % dclass)
             return
 
         # Set the account & avList:
@@ -291,25 +333,38 @@ class GetAvatarsOperation(AvatarOperation):
         self.avatarFields = None
 
     def _handleQueryAvatars(self):
+        # Now, we will query the avatars that exist in the account.
         self.pendingAvatars = set()
         self.avatarFields = {}
+
+        # Loop through the list of avatars:
         for avId in self.avList:
             if avId:
+                # This index contains an avatar! Add it to the pending avatars.
                 self.pendingAvatars.add(avId)
 
+                # This is our callback function that queryObject
+                # will call when done querying each avatar object.
                 def response(dclass, fields, avId=avId):
                     if dclass != self.loginManager.air.dclassesByName['DistributedToonUD']:
-                        # TODO: Kill the connection
+                        # The dclass is invalid! Close the connection:
+                        self._handleCloseConnection('One of the account\'s avatars is invalid! dclass = %s, expected = %s' % (
+                            dclass, self.loginManager.air.dclassesByName['DistributedToonUD'].getName()))
                         return
 
+                    # Otherwise, we're all set! Add the queried avatar fields to the
+                    # avatarFields array, remove from the pending list, and call the
+                    # __handleSendAvatars function.
                     self.avatarFields[avId] = fields
                     self.pendingAvatars.remove(avId)
                     if not self.pendingAvatars:
                         self.__handleSendAvatars()
 
+                # Query the avatar object.
                 self.loginManager.air.dbInterface.queryObject(self.loginManager.air.dbId, avId, response)
 
         if not self.pendingAvatars:
+            # No pending avatars! Call the __handleSendAvatars function:
             self.__handleSendAvatars()
 
     def __handleSendAvatars(self):
@@ -348,19 +403,25 @@ class CreateAvatarOperation(GameOperation):
         self.avDNA = None
 
     def start(self, avDNA, avPosition):
+        # First, perform some basic sanity checking.
         if avPosition >= 6:
-            # TODO: Kill the connection
+            # This index is invalid! Close the connection.
+            self._handleCloseConnection('Invalid index specified!')
             return
 
+        # Check if this DNA is valid:
         dna = ToonDNA()
         valid = dna.isValidNetString(avDNA)
         if not valid:
-            # TODO: Kill the connection
+            # This DNA is invalid! Close the connection.
+            self._handleCloseConnection('Invalid DNA specified!')
             return
 
+        # Store these values:
         self.avPosition = avPosition
         self.avDNA = avDNA
 
+        # Now we can query their account.
         self.__handleRetrieveAccount()
 
     def __handleRetrieveAccount(self):
@@ -369,17 +430,25 @@ class CreateAvatarOperation(GameOperation):
 
     def __handleAccountRetrieved(self, dclass, fields):
         if dclass != self.loginManager.air.dclassesByName['AstronAccountUD']:
-            # TODO: Kill the connection
+            # This is not an account object! Close the connection.
+            self._handleCloseConnection('Your account object (%s) was not found in the database!' % dclass)
             return
 
+        # Now we will get our avList.
         self.account = fields
         self.avList = self.account['ACCOUNT_AV_SET']
+
+        # We will now sanitize the avList.
         self.avList = self.avList[:6]
         self.avList += [0] * (6 - len(self.avList))
+
+        # Check if the index is open:
         if self.avList[self.avPosition]:
-            # TODO: Kill the connection
+            # This index is not open! Close the connection.
+            self._handleCloseConnection('This avatar slot is already taken by another avatar!')
             return
 
+        # All set, now let's create the avatar!
         self.__handleCreateAvatar()
 
     def __handleCreateAvatar(self):
@@ -400,9 +469,11 @@ class CreateAvatarOperation(GameOperation):
 
     def __handleToonCreated(self, avId):
         if not avId:
-            # TODO: Kill the connection
+            # The database was unable to create a new avatar object! Close the connection.
+            self._handleCloseConnection('Database failed to create the new avatar object!')
             return
 
+        # We can now store the avatar.
         self.avId = avId
         self.__handleStoreAvatar()
 
@@ -416,9 +487,12 @@ class CreateAvatarOperation(GameOperation):
 
     def __handleAvatarStored(self, fields):
         if fields:
-            # TODO: Kill the connection
+            # The new avatar was not associated with the account! Close the connection.
+            self._handleCloseConnection('Database failed to associate the new avatar to your account!')
             return
 
+        # Otherwise, we're done!
+        self.loginManager.air.writeServerEvent('avatar-created', self.avId, self.sender, self.avPosition)
         self.loginManager.sendUpdateToAccountId(self.sender, 'createAvatarResponse', [self.avId])
         self._handleDone()
 
@@ -437,22 +511,31 @@ class SetNamePatternOperation(AvatarOperation):
         AvatarOperation.start(self)
 
     def __handleRetrieveAvatar(self):
+        # Retrieves the avatar from the database.
         if self.avId and self.avId not in self.avList:
-            # TODO: Kill the connection
+            # The avatar exists, but it's not an avatar that is
+            # associated with this account. Close the connection.
+            self._handleCloseConnection('Tried to name an avatar not in the account!')
             return
 
+        # Query the database for the avatar. self.__handleAvatarRetrieved is
+        # our callback which will be called upon queryObject's completion.
         self.loginManager.air.dbInterface.queryObject(self.loginManager.air.dbId, self.avId,
                                                       self.__handleAvatarRetrieved)
 
     def __handleAvatarRetrieved(self, dclass, fields):
         if dclass != self.loginManager.air.dclassesByName['DistributedToonUD']:
-            # TODO: Kill the connection
+            # This dclass is not a valid avatar! Close the connection.
+            self._handleCloseConnection('One of the account\'s avatars is invalid!')
             return
 
         if fields['WishNameState'][0] != 'OPEN':
-            # TODO: Kill the connection
+            # This avatar's wish name state is not set
+            # to a nameable state. Close the connection.
+            self._handleCloseConnection('Avatar is not in a nameable state!')
             return
 
+        # Otherwise, we can set the name:
         self.__handleSetName()
 
     def __handleSetName(self):
@@ -500,22 +583,31 @@ class SetNameTypedOperation(AvatarOperation):
         self.__handleJudgeName()
 
     def __handleRetrieveAvatar(self):
+        # Retrieves the avatar from the database.
         if self.avId and self.avId not in self.avList:
-            # TODO: Kill the connection
+            # The avatar exists, but it's not an avatar that is
+            # associated with this account. Close the connection.
+            self._handleCloseConnection('Tried to name an avatar not in the account!')
             return
 
+        # Query the database for the avatar. self.__handleAvatarRetrieved is
+        # our callback which will be called upon queryObject's completion.
         self.loginManager.air.dbInterface.queryObject(self.loginManager.air.dbId, self.avId,
                                                       self.__handleAvatarRetrieved)
 
     def __handleAvatarRetrieved(self, dclass, fields):
         if dclass != self.loginManager.air.dclassesByName['DistributedToonUD']:
-            # TODO: Kill the connection
+            # This dclass is not a valid avatar! Close the connection.
+            self._handleCloseConnection('One of the account\'s avatars is invalid!')
             return
 
         if fields['WishNameState'][0] != 'OPEN':
-            # TODO: Kill the connection
+            # This avatar's wish name state is not set
+            # to a nameable state. Close the connection.
+            self._handleCloseConnection('Avatar is not in a nameable state!')
             return
 
+        # Now we can move on to the judging!
         self.__handleJudgeName()
 
     def __handleJudgeName(self):
@@ -542,10 +634,15 @@ class AcknowledgeNameOperation(AvatarOperation):
         AvatarOperation.start(self)
 
     def __handleGetTargetAvatar(self):
+        # Make sure that the target avatar is part of the account:
         if self.avId not in self.avList:
-            # TODO: Kill the connection
+            # The sender tried to acknowledge name on an avatar not on the account!
+            # Close the connection.
+            self._handleCloseConnection('Tried to acknowledge name on an avatar not in the account!')
             return
 
+        # We can now query the database for the avatar. self.__handleAvatarRetrieved is the
+        # callback which will be called upon the completion of queryObject.
         self.loginManager.air.dbInterface.queryObject(self.loginManager.air.dbId, self.avId,
                                                       self.__handleAvatarRetrieved)
 
@@ -591,8 +688,10 @@ class RemoveAvatarOperation(GetAvatarsOperation):
         GetAvatarsOperation.start(self)
 
     def __handleRemoveAvatar(self):
+        # Make sure that the target avatar is part of the account:
         if self.avId not in self.avList:
-            # TODO: Kill the connection
+            # The sender tried to remove an avatar not on the account! Close the connection.
+            self._handleCloseConnection('Tried to remove an avatar not on the account!')
             return
 
         index = self.avList.index(self.avId)
@@ -616,7 +715,8 @@ class RemoveAvatarOperation(GetAvatarsOperation):
 
     def __handleAvatarRemoved(self, fields):
         if fields:
-            # TODO: Kill the connection
+            # The avatar was unable to be removed from the account! Close the account.
+            self._handleCloseConnection('Database failed to mark the avatar as removed!')
             return
 
         self._handleQueryAvatars()
@@ -746,18 +846,47 @@ class AstronLoginManagerUD(DistributedObjectGlobalUD):
         # TODO: In the future, add more database interfaces & make this configurable.
         self.accountDb = DeveloperAccountDB(self)
 
+    def closeConnection(self, connectionId, reason='', forOperations=False, isAccount=False):
+        if forOperations:
+            if isAccount:
+                # Closes the account for duplicate operations.
+                operation = self.account2operation.get(connectionId)
+                if not operation:
+                    self.notify.warning('Tried to close account %s for duplicate operations, but none exist!' % connectionId)
+                    return
+            else:
+                # Closes the connection for duplicate operations.
+                operation = self.sender2loginOperation.get(connectionId)
+                if not operation:
+                    self.notify.warning('Tried to close connection %s for duplicate operations, but none exist!' % connectionId)
+                    return
+
+        # Sends CLIENTAGENT_EJECT to the given connectionId with the given reason.
+        datagram = PyDatagram()
+        if isAccount:
+            # Closes the account's connection.
+            datagram.addServerHeader(self.GetAccountConnectionChannel(connectionId), self.air.ourChannel, CLIENTAGENT_EJECT)
+        else:
+            datagram.addServerHeader(connectionId, self.air.ourChannel, CLIENTAGENT_EJECT)
+        datagram.addUint32(122)
+        if forOperations and not reason:
+            datagram.addString('An operation is already running: %s' % operation.__class__.__name__)
+        else:
+            datagram.addString(reason if reason else 'No reason specified.')
+        self.air.send(datagram)
+
     def runLoginOperation(self, playToken):
         # Runs a login operation on the sender. First, get the sender:
         sender = self.air.getMsgSender()
 
         # Is the sender already logged in?
         if sender >> 32:
-            # TODO kill connection
+            self.closeConnection(sender, reason='This account is already logged in.')
             return
 
         # Is the sender already logging in?
         if sender in list(self.sender2loginOperation.keys()):
-            # TODO kill connection
+            self.closeConnection(sender, forOperations=True)
             return
 
         # Run the login operation:
@@ -770,12 +899,12 @@ class AstronLoginManagerUD(DistributedObjectGlobalUD):
         sender = self.air.getAccountIdFromSender()
         if not sender:
             # Sender doesn't exist; not logged in.
-            # TODO KILL CONNECTION
+            self.closeConnection(sender, reason='Client is not logged in.', isAccount=True)
             return
 
         if sender in self.account2operation:
             # Sender is already currently running a game operation.
-            # TODO KILL CONNECTION
+            self.closeConnection(sender, forOperations=True, isAccount=True)
             return
 
         # Run the game operation:
@@ -818,7 +947,8 @@ class AstronLoginManagerUD(DistributedObjectGlobalUD):
         currentAvId = self.air.getAvatarIdFromSender()
         accId = self.air.getAccountIdFromSender()
         if currentAvId and avId:
-            # todo: kill the connection
+            # An avatar has already been chosen!
+            self.closeConnection(accountId, reason='An avatar is already chosen!', isAccount=True)
             return
         elif not currentAvId and not avId:
             # I don't think we need to do anything extra here
