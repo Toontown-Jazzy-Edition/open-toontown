@@ -38,11 +38,7 @@ class DisplaySettingsDialog(DirectFrame, StateData.StateData):
         self.isLoaded = 1
         self.anyChanged = 0
         self.apiChanged = 0
-        self.screenSizes = ((640, 480),
-         (800, 600),
-         (1024, 768),
-         (1280, 1024),
-         (1600, 1200))
+        self.screenSizes = ToontownGlobals.resList
         guiButton = loader.loadModel('phase_3/models/gui/quit_button')
         gui = loader.loadModel('phase_3.5/models/gui/friendslist_gui')
         nameShopGui = loader.loadModel('phase_3/models/gui/nameshop_gui')

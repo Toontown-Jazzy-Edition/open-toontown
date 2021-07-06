@@ -27,12 +27,7 @@ class ToonBase(OTPBase.OTPBase):
             music = Settings.getMusic()
             sfx = Settings.getSfx()
             toonChatSounds = Settings.getToonChatSounds()
-            resList = [(640, 480),
-             (800, 600),
-             (1024, 768),
-             (1280, 1024),
-             (1600, 1200)]
-            res = resList[Settings.getResolution()]
+            res = OTPGlobals.resList[Settings.getResolution()]
             if mode == None:
                 mode = 1
             if res == None:

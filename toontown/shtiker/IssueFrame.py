@@ -335,7 +335,7 @@ class IssueFrame(DirectFrame):
     def loadFlatQuad(self, fullFilename):
         cm = CardMaker('cm-%s' % fullFilename)
         cm.setColor(1.0, 1.0, 1.0, 1.0)
-        aspect = base.camLens.getAspectRatio()
+        aspect = 4.0/3.0
         htmlWidth = 2.0 * aspect * WEB_WIDTH_PIXELS / float(WIN_WIDTH)
         htmlHeight = 2.0 * float(WEB_HEIGHT_PIXELS) / float(WIN_HEIGHT)
         cm.setFrame(-htmlWidth / 2.0, htmlWidth / 2.0, -htmlHeight / 2.0, htmlHeight / 2.0)
