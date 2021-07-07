@@ -45,3 +45,6 @@ class TTChatInputNormal(ChatInputNormal.ChatInputNormal):
         if localAvatar.chatMgr.chatInputWhiteList.isActive():
             return True
         return False
+
+    def reparentTo(self, parent):
+        self.chatFrame.reparentTo(parent)

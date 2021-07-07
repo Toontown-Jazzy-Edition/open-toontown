@@ -46,7 +46,7 @@ class FriendInviter(DirectFrame):
 
     def __init__(self, avId, avName, avDisableName):
         self.wantPlayerFriends = base.config.GetBool('want-player-friends', 0)
-        DirectFrame.__init__(self, pos=(0.3, 0.1, 0.65), image_color=GlobalDialogColor, image_scale=(1.0, 1.0, 0.6), text='', text_wordwrap=TTLocalizer.FIdirectFrameWordwrap, text_scale=TTLocalizer.FIdirectFrame, text_pos=TTLocalizer.FIdirectFramePos)
+        DirectFrame.__init__(self, parent=base.a2dTopRight, pos=(-1.033, 0.1, -0.35), image_color=GlobalDialogColor, image_scale=(1.0, 1.0, 0.6), text='', text_wordwrap=TTLocalizer.FIdirectFrameWordwrap, text_scale=TTLocalizer.FIdirectFrame, text_pos=TTLocalizer.FIdirectFramePos)
         self['image'] = DGG.getDefaultDialogGeom()
         self.avId = avId
         self.toonName = avName

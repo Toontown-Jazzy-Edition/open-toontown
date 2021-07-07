@@ -204,6 +204,7 @@ class Purchase(PurchaseBase):
         self.rewardDoubledJellybeanLabel.removeNode()
         del self.convertingVotesToBeansLabel
         del self.rewardDoubledJellybeanLabel
+        base.camLens.setMinFov(ToontownGlobals.DefaultCameraFov / (4.0 / 3.0))
 
     def showStatusText(self, text):
         self.statusLabel['text'] = text
